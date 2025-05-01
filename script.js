@@ -198,9 +198,44 @@ function analyzeConstructorPosition() {
       startTimer(game.turn());
       document.getElementById("timers").style.display = "flex";
     }
+
+    // 👉 AI делает первый ход, если он на очереди
+    const isAItoMove = (game.turn() === 'w' && chosenSide === 'black') || (game.turn() === 'b' && chosenSide === 'white');
+    if (isAItoMove) {
+      setTimeout(() => {
+        lozzaThink(game.fen());
+      }, 300);
+    }
+
   }, 50);
 }
 
+
+// === Инициализация lozza.js как Web Worker ===
+if (typeof Worker === "function") {
+  var lozzaWorker = new Worker("libs/lozza.js");
+
+  lozzaWorker.onmessage = function (e) {
+    const data = e.data;
+
+    if (data.startsWith("bestmove")) {
+      const bestMove = data.split(" ")[1];
+      if (!bestMove || bestMove === '(none)') return;
+
+      const move = game.move({ from: bestMove.slice(0, 2), to: bestMove.slice(2, 4), promotion: 'q' });
+      if (move) {
+        board.position(game.fen());
+        updateMoveHistory();
+        switchTimers();
+        if (game.game_over()) endGame(false);
+      }
+    }
+  };
+
+  function docmd(command) {
+    lozzaWorker.postMessage(command);
+  }
+}
 
 
 
@@ -482,16 +517,19 @@ function showScreen(screenId) {
 
 // Открывает Ассистент-доску
 function openAssistant() {
-  showScreen('assistant-screen');
+  showScreen("assistant-screen");
 
-  assistantBoard = Chessboard('assistant-board', {
-    draggable: true,
-    position: game.fen(),  // Используем текущее состояние game
-    pieceTheme: 'libs/img/{piece}.png',
-    onDrop: onAssistantDrop,
-    onDragStart: onAssistantDragStart
-  });
+  let fen = "начальная позиция недоступна";
+  try {
+    if (game && typeof game.fen === "function") {
+      fen = game.fen();
+    }
+  } catch (e) {
+    // безопасно пропускаем
+  }
+
 }
+
 
 // Разрешает перетаскивание
 function onAssistantDragStart(source, piece) {
@@ -568,7 +606,7 @@ function askAssistant() {
   input.value = '';
 
   setTimeout(() => {
-    let response = "Извините, я не понял вопрос.";
+    let response = "";
 
     if (question.toLowerCase().includes("какой ход лучший")) {
       docmd('position fen ' + game.fen());
@@ -580,11 +618,29 @@ function askAssistant() {
       response = game.in_checkmate()
         ? "Да, это мат!"
         : "Нет, мата нет. " + (game.in_check() ? "Но есть шах!" : "Шаха тоже нет.");
+    } else {
+      response = getBotResponse(question);  // ✅ ← это главное!
     }
 
     addMessage(response, "ai");
   }, 800);
 }
+
+
+
+function sendAssistantMessage() {
+  const input = document.getElementById("assistant-input");
+  const message = input.value.trim();
+  if (!message) return;
+
+  addMessage(message, "user");
+  input.value = "";
+
+  setTimeout(() => {
+    askAssistant(); // 👈 вызывает ИИ-ответ
+  }, 500);
+}
+
 
 // Добавление сообщений в чат
 function addMessage(text, sender) {
